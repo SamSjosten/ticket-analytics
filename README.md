@@ -7,6 +7,8 @@ A Python project for analyzing IT support ticket data, generating insights, and 
 - **Interactive Dashboard**: Real-time data visualization with filters and drill-downs
 - **SQL Server Integration**: Direct connection to SQL Server database for real-time analytics
 - **Auth0 Authentication**: Secure user authentication with automatic user profile syncing to database
+- **Flexible Data Import**: Automatic field mapping for company-specific CSV formats
+- **CSV Export**: Download filtered data directly from the dashboard
 - Analyze ticket volume, resolution times, and team performance
 - Generate formatted Excel reports with charts
 - Filter data by date range, category, priority, team, and status
@@ -46,12 +48,15 @@ See [SQL Server Setup Guide](docs/SQL_SERVER_SETUP.md) for detailed configuratio
 # Test connection
 python scripts/load_to_sql.py --test
 
-# Generate and load mock data
-python scripts/load_to_sql.py --generate --num-tickets 1000
+# Load your company data from CSV
+python scripts/load_to_sql.py --csv path/to/your/company_data.csv
 
-# Or load from existing CSV
-python scripts/load_to_sql.py --csv data/raw/tickets.csv
+# Or generate mock data for testing
+python scripts/load_to_sql.py --generate --num-tickets 1000
 ```
+
+**Importing Company Data:**
+The application automatically maps your company-specific field names (Dispatch No., CSR, Techassigned, etc.) to the standard schema. See the [Company Data Import Guide](docs/COMPANY_DATA_IMPORT.md) for detailed instructions.
 
 ### 3. Launch the Interactive Dashboard
 
@@ -162,5 +167,5 @@ See the [SQL Server Setup Guide](docs/SQL_SERVER_SETUP.md) for complete setup in
 - [x] Build Streamlit dashboard
 - [x] Add technician performance tracking
 - [x] Add user authentication (Auth0)
-- [ ] Export filtered data to CSV
+- [x] Export filtered data to CSV
 - [ ] Support for other databases (PostgreSQL, MySQL)

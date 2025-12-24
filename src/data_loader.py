@@ -75,47 +75,114 @@ def load_tickets(
     return df
 
 
+def map_company_fields(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Map company-specific field names to standard schema.
+
+    Supports multiple field name formats:
+    - Company format: "Dispatch No.", "Call No.", "CSR", "Techassigned", etc.
+    - Standard format: "ticket_id", "created_date", etc.
+
+    Args:
+        df: Raw DataFrame with company-specific fields
+
+    Returns:
+        DataFrame with standardized field names
+    """
+    df = df.copy()
+
+    # Define field mapping: company_field -> standard_field
+    field_mapping = {
+        # Ticket identifiers
+        "Dispatch No.": "ticket_id",
+        "Call No.": "call_number",
+
+        # Personnel
+        "CSR": "assigned_team",  # Customer Service Representative -> Team
+        "Techassigned": "assigned_technician",
+
+        # Status and dates
+        "Status": "status",
+        "Date": "created_date",
+        "Close Date": "resolved_date",
+
+        # Company and problem details
+        "Company Name": "company_name",
+        "Problemcode": "category",  # Problem code maps to category
+        "Problem": "problem_type",
+        "Problem Description": "description",
+
+        # Metrics
+        "RESPONSETIME": "resolution_time_hours"
+    }
+
+    # Rename columns that exist in the DataFrame
+    rename_dict = {}
+    for company_field, standard_field in field_mapping.items():
+        if company_field in df.columns:
+            rename_dict[company_field] = standard_field
+            logger.info(f"Mapping '{company_field}' -> '{standard_field}'")
+
+    if rename_dict:
+        df = df.rename(columns=rename_dict)
+        logger.info(f"Mapped {len(rename_dict)} company-specific fields to standard schema")
+
+    return df
+
+
 def clean_ticket_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Clean and standardize ticket data.
-    
+
     Args:
         df: Raw ticket DataFrame
-        
+
     Returns:
         Cleaned DataFrame
     """
     df = df.copy()
-    
+
+    # First, map company-specific fields to standard schema
+    df = map_company_fields(df)
+
     # Convert date columns
     date_columns = ["created_date", "resolved_date"]
     for col in date_columns:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
-    
+
     # Standardize text columns
     text_columns = ["category", "priority", "assigned_team", "assigned_technician", "status"]
     for col in text_columns:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip().str.title()
-    
+
     # Ensure numeric columns are proper types
     if "resolution_time_hours" in df.columns:
         df["resolution_time_hours"] = pd.to_numeric(
             df["resolution_time_hours"], errors="coerce"
         )
-    
+
+    # If we have a ticket_id but no explicit priority, try to infer it from other fields
+    if "ticket_id" in df.columns and "priority" not in df.columns:
+        # Default priority to Medium if not specified
+        df["priority"] = "Medium"
+        logger.info("No priority field found, defaulting to 'Medium'")
+
     # Add derived columns
     if "created_date" in df.columns:
         df["created_week"] = df["created_date"].dt.isocalendar().week
         df["created_month"] = df["created_date"].dt.to_period("M").astype(str)
         df["created_weekday"] = df["created_date"].dt.day_name()
-    
+
     # Log data quality info
     null_counts = df.isnull().sum()
     if null_counts.any():
         logger.warning(f"Null values found:\n{null_counts[null_counts > 0]}")
-    
+
+    # Log final schema
+    logger.info(f"Final schema: {list(df.columns)}")
+
     return df
 
 

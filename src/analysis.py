@@ -73,30 +73,71 @@ def tickets_by_status(df: pd.DataFrame) -> pd.DataFrame:
 def avg_resolution_time_by_priority(df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate average resolution time by priority level.
-    
+
     Args:
         df: Ticket DataFrame
-        
+
     Returns:
         DataFrame with resolution time stats by priority
     """
     resolved = df[df["status"] == "Resolved"].copy()
-    
-    stats = resolved.groupby("priority")["resolution_time_hours"].agg([
+
+    # Guard against empty resolved tickets
+    if resolved.empty:
+        # Return empty DataFrame with proper structure
+        return pd.DataFrame(columns=[
+            'priority', 'avg_hours', 'median_hours', 'min_hours',
+            'max_hours', 'count', 'sla_threshold', 'within_sla_pct'
+        ])
+
+    # Ensure resolution_time_hours is numeric (handle any string/object values)
+    resolved["resolution_time_hours"] = pd.to_numeric(
+        resolved["resolution_time_hours"],
+        errors='coerce'
+    )
+
+    # Drop rows where resolution_time_hours is NaN after conversion
+    resolved = resolved.dropna(subset=["resolution_time_hours"])
+
+    # Check again if we have data after cleaning
+    if resolved.empty:
+        return pd.DataFrame(columns=[
+            'priority', 'avg_hours', 'median_hours', 'min_hours',
+            'max_hours', 'count', 'sla_threshold', 'within_sla_pct'
+        ])
+
+    stats = resolved.groupby("priority", as_index=False)["resolution_time_hours"].agg([
         ("avg_hours", "mean"),
         ("median_hours", "median"),
         ("min_hours", "min"),
         ("max_hours", "max"),
         ("count", "count")
     ]).round(2)
-    
+
+    # Reset index to get priority as a column (fixes deprecation)
+    stats = stats.reset_index()
+
+    # Ensure all numeric columns are actually numeric type
+    for col in ['avg_hours', 'median_hours', 'min_hours', 'max_hours']:
+        stats[col] = pd.to_numeric(stats[col], errors='coerce')
+
     # Add SLA threshold for comparison
-    stats["sla_threshold"] = stats.index.map(SLA_THRESHOLDS)
-    stats["within_sla_pct"] = resolved.groupby("priority").apply(
-        lambda x: (x["resolution_time_hours"] <= SLA_THRESHOLDS.get(x.name, 999)).mean() * 100
-    ).round(1)
-    
-    return stats.reset_index()
+    stats["sla_threshold"] = stats["priority"].map(SLA_THRESHOLDS)
+
+    # Calculate within_sla_pct - fixed to avoid deprecated GroupBy behavior
+    within_sla_list = []
+    for priority in stats["priority"]:
+        priority_data = resolved[resolved["priority"] == priority]
+        if len(priority_data) > 0:
+            sla_threshold = SLA_THRESHOLDS.get(priority, 999)
+            within_pct = (priority_data["resolution_time_hours"] <= sla_threshold).mean() * 100
+            within_sla_list.append(round(within_pct, 1))
+        else:
+            within_sla_list.append(0.0)
+
+    stats["within_sla_pct"] = within_sla_list
+
+    return stats
 
 
 def tickets_over_time(
@@ -313,27 +354,58 @@ def technician_detailed_breakdown(df: pd.DataFrame, technician_name: str) -> dic
 def generate_summary_stats(df: pd.DataFrame) -> dict:
     """
     Generate high-level summary statistics.
-    
+
     Args:
         df: Ticket DataFrame
-        
+
     Returns:
         Dictionary with summary statistics
     """
+    # Guard against empty dataframe
+    if df.empty:
+        return {
+            "total_tickets": 0,
+            "resolved_tickets": 0,
+            "open_tickets": 0,
+            "in_progress_tickets": 0,
+            "resolution_rate_pct": 0.0,
+            "avg_resolution_hours": 0.0,
+            "median_resolution_hours": 0.0,
+            "date_range_start": "N/A",
+            "date_range_end": "N/A",
+            "top_category": "N/A",
+            "busiest_day": "N/A"
+        }
+
     resolved = df[df["status"] == "Resolved"]
-    
+    total_tickets = len(df)
+
+    # Safe division for resolution rate
+    resolution_rate_pct = round(len(resolved) / total_tickets * 100, 1) if total_tickets > 0 else 0.0
+
+    # Safe mean/median calculation for resolution time
+    avg_resolution = resolved["resolution_time_hours"].mean() if len(resolved) > 0 else 0.0
+    median_resolution = resolved["resolution_time_hours"].median() if len(resolved) > 0 else 0.0
+
+    # Safe mode calculation - return first mode or "Unknown" if no mode
+    category_mode = df["category"].mode()
+    top_category = category_mode.iloc[0] if len(category_mode) > 0 else "Unknown"
+
+    weekday_mode = df["created_weekday"].mode() if "created_weekday" in df.columns else pd.Series([])
+    busiest_day = weekday_mode.iloc[0] if len(weekday_mode) > 0 else "Unknown"
+
     return {
-        "total_tickets": len(df),
+        "total_tickets": total_tickets,
         "resolved_tickets": len(resolved),
         "open_tickets": len(df[df["status"] == "Open"]),
         "in_progress_tickets": len(df[df["status"] == "In Progress"]),
-        "resolution_rate_pct": round(len(resolved) / len(df) * 100, 1),
-        "avg_resolution_hours": round(resolved["resolution_time_hours"].mean(), 2),
-        "median_resolution_hours": round(resolved["resolution_time_hours"].median(), 2),
+        "resolution_rate_pct": resolution_rate_pct,
+        "avg_resolution_hours": round(avg_resolution, 2),
+        "median_resolution_hours": round(median_resolution, 2),
         "date_range_start": df["created_date"].min().strftime("%Y-%m-%d"),
         "date_range_end": df["created_date"].max().strftime("%Y-%m-%d"),
-        "top_category": df["category"].mode().iloc[0],
-        "busiest_day": df["created_weekday"].mode().iloc[0] if "created_weekday" in df.columns else None
+        "top_category": top_category,
+        "busiest_day": busiest_day
     }
 
 

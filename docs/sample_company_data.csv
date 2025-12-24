@@ -1,0 +1,6 @@
+Dispatch No.,Call No.,CSR,Techassigned,Status,Date,Close Date,Company Name,Problemcode,Problem,Problem Description,RESPONSETIME
+DISP-001,CALL-1001,Support Team,John Doe,Resolved,2024-01-15,2024-01-16,Acme Corporation,Hardware,Printer Issue,Office printer not responding to print jobs,24
+DISP-002,CALL-1002,IT Team,Jane Smith,In Progress,2024-01-16,,Beta Industries,Software,Email Sync,Outlook not syncing with Exchange server,
+DISP-003,CALL-1003,Support Team,Bob Johnson,Resolved,2024-01-17,2024-01-17,Gamma LLC,Network,Wi-Fi Connection,Unable to connect to corporate Wi-Fi,4
+DISP-004,CALL-1004,Help Desk,Alice Williams,Open,2024-01-18,,Delta Inc,Hardware,Laptop,Laptop screen flickering intermittently,
+DISP-005,CALL-1005,IT Team,John Doe,Resolved,2024-01-19,2024-01-20,Epsilon Corp,Software,Application Error,CRM application crashes on startup,36

@@ -99,7 +99,8 @@ class Auth0Manager:
             'scope': self.config.SCOPE,
             'state': state,
             'code_challenge': code_challenge,
-            'code_challenge_method': 'S256'
+            'code_challenge_method': 'S256',
+            'prompt': 'login'  # Force login screen (allows switching accounts)
         }
 
         if self.config.AUDIENCE:

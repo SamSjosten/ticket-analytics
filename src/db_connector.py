@@ -80,8 +80,13 @@ class SQLServerConnector:
         """
         if not self.engine:
             url = self.config.get_sqlalchemy_url()
-            self.engine = create_engine(url)
-            logger.info("Created SQLAlchemy engine")
+            # Use fast_executemany for better performance and to avoid parameter binding issues
+            self.engine = create_engine(
+                url,
+                fast_executemany=True,
+                use_setinputsizes=False  # Avoid pyodbc parameter precision issues
+            )
+            logger.info("Created SQLAlchemy engine with fast_executemany=True")
         return self.engine
 
     def load_tickets(
@@ -91,7 +96,7 @@ class SQLServerConnector:
         status_filter: Optional[str] = None
     ) -> pd.DataFrame:
         """
-        Load ticket data from SQL Server.
+        Load ticket data from SQL Server with parameterized queries.
 
         Args:
             start_date: Optional start date filter
@@ -101,48 +106,70 @@ class SQLServerConnector:
         Returns:
             DataFrame with ticket data
         """
-        # Build query
+        # Build query with placeholders
         query = f"SELECT * FROM {self.config.TICKETS_TABLE}"
         conditions = []
+        params = {}
 
         if start_date:
-            conditions.append(f"created_date >= '{start_date.strftime('%Y-%m-%d')}'")
+            conditions.append("created_date >= :start_date")
+            params['start_date'] = start_date.strftime('%Y-%m-%d')
 
         if end_date:
-            conditions.append(f"created_date <= '{end_date.strftime('%Y-%m-%d')}'")
+            conditions.append("created_date <= :end_date")
+            params['end_date'] = end_date.strftime('%Y-%m-%d')
 
         if status_filter:
-            conditions.append(f"status = '{status_filter}'")
+            conditions.append("status = :status_filter")
+            params['status_filter'] = status_filter
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
         query += " ORDER BY created_date DESC"
 
-        logger.info(f"Executing query: {query}")
+        logger.info(f"Executing query with params: {params}")
 
         try:
             engine = self.get_engine()
-            df = pd.read_sql(query, engine)
+            # Use parameterized query with SQLAlchemy text()
+            df = pd.read_sql(text(query), engine, params=params)
             logger.info(f"Loaded {len(df)} tickets from SQL Server")
             return df
         except Exception as e:
             logger.error(f"Failed to load tickets: {e}")
             raise
 
-    def execute_query(self, query: str) -> pd.DataFrame:
+    def execute_query(self, query: str, params: Optional[dict] = None) -> pd.DataFrame:
         """
         Execute a custom SQL query and return results as DataFrame.
 
+        WARNING: Use parameterized queries to prevent SQL injection.
+        Pass user-controlled values via the params dict, not by string formatting.
+
         Args:
-            query: SQL query to execute
+            query: SQL query to execute (use :param_name for placeholders)
+            params: Optional dictionary of parameters for the query
 
         Returns:
             DataFrame with query results
+
+        Example:
+            # Safe - using parameters
+            execute_query("SELECT * FROM table WHERE id = :id", {'id': user_id})
+
+            # UNSAFE - DO NOT DO THIS
+            execute_query(f"SELECT * FROM table WHERE id = {user_id}")
         """
         try:
             engine = self.get_engine()
-            df = pd.read_sql(query, engine)
+            if params:
+                df = pd.read_sql(text(query), engine, params=params)
+            else:
+                # Log warning if query looks like it might have user input
+                if any(char in query for char in ["'", '"']) and "WHERE" in query.upper():
+                    logger.warning("Query contains quotes and WHERE clause - ensure it's not vulnerable to SQL injection")
+                df = pd.read_sql(text(query), engine)
             logger.info(f"Query returned {len(df)} rows")
             return df
         except Exception as e:
@@ -207,13 +234,25 @@ class SQLServerConnector:
         """
         try:
             engine = self.get_engine()
+
+            # Calculate safe chunksize to avoid SQL Server's 2100 parameter limit
+            # SQL Server limit is 2100 parameters, and we need to account for all columns
+            num_columns = len(df.columns)
+            # Use a safe chunksize: 2000 / num_columns to stay under the limit
+            safe_chunksize = max(1, min(100, 2000 // num_columns))
+
+            logger.info(f"Inserting {len(df)} rows with chunksize={safe_chunksize} (columns={num_columns})")
+
+            # Use method='multi' for better performance with safe chunksize
             rows_inserted = df.to_sql(
                 self.config.TICKETS_TABLE,
                 engine,
                 if_exists=if_exists,
-                index=False
+                index=False,
+                method='multi',
+                chunksize=safe_chunksize
             )
-            logger.info(f"Inserted {rows_inserted} tickets into SQL Server")
+            logger.info(f"Successfully inserted {rows_inserted} tickets into SQL Server")
             return rows_inserted
         except Exception as e:
             logger.error(f"Failed to insert tickets: {e}")

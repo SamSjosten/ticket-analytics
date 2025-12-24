@@ -325,6 +325,90 @@ def main():
         max_value=max_date
     )
 
+    # === DASHBOARD CONFIGURATION ===
+    st.sidebar.header("⚙️ Dashboard Configuration")
+
+    # Preset configurations
+    preset = st.sidebar.selectbox(
+        "Dashboard Preset",
+        options=["Custom", "Executive Summary", "Detailed Analysis", "Technician View", "Visual Only"],
+        index=0
+    )
+
+    # Apply preset configurations
+    if preset == "Executive Summary":
+        show_key_metrics = True
+        show_detailed_data = False
+        show_technician_perf = False
+        show_trend_analysis = True
+        show_visualizations = True
+        show_category_chart = True
+        show_priority_chart = True
+        show_status_chart = False
+        show_resolution_chart = False
+        show_team_chart = True
+        show_sla_chart = True
+    elif preset == "Detailed Analysis":
+        show_key_metrics = True
+        show_detailed_data = True
+        show_technician_perf = True
+        show_trend_analysis = True
+        show_visualizations = True
+        show_category_chart = True
+        show_priority_chart = True
+        show_status_chart = True
+        show_resolution_chart = True
+        show_team_chart = True
+        show_sla_chart = True
+    elif preset == "Technician View":
+        show_key_metrics = True
+        show_detailed_data = True
+        show_technician_perf = True
+        show_trend_analysis = False
+        show_visualizations = False
+        show_category_chart = False
+        show_priority_chart = False
+        show_status_chart = False
+        show_resolution_chart = False
+        show_team_chart = False
+        show_sla_chart = False
+    elif preset == "Visual Only":
+        show_key_metrics = False
+        show_detailed_data = False
+        show_technician_perf = False
+        show_trend_analysis = True
+        show_visualizations = True
+        show_category_chart = True
+        show_priority_chart = True
+        show_status_chart = True
+        show_resolution_chart = True
+        show_team_chart = True
+        show_sla_chart = True
+    else:  # Custom
+        with st.sidebar.expander("Display Sections", expanded=False):
+            show_key_metrics = st.checkbox("Key Metrics", value=True)
+            show_detailed_data = st.checkbox("Detailed Data Tables", value=True)
+            show_technician_perf = st.checkbox("Technician Performance", value=True)
+            show_trend_analysis = st.checkbox("Trend Analysis", value=True)
+            show_visualizations = st.checkbox("Visualizations", value=True)
+
+    # Individual visualization toggles (only for Custom preset)
+    if preset == "Custom":
+        if show_visualizations:
+            with st.sidebar.expander("Visualization Options", expanded=False):
+                show_category_chart = st.checkbox("Category Distribution", value=True)
+                show_priority_chart = st.checkbox("Priority Distribution", value=True)
+                show_status_chart = st.checkbox("Status Breakdown", value=True)
+                show_resolution_chart = st.checkbox("Resolution Time vs SLA", value=True)
+                show_team_chart = st.checkbox("Team Performance", value=True)
+                show_sla_chart = st.checkbox("SLA Compliance", value=True)
+        else:
+            # Set defaults if visualizations section is hidden
+            show_category_chart = show_priority_chart = show_status_chart = True
+            show_resolution_chart = show_team_chart = show_sla_chart = True
+
+    st.sidebar.markdown("---")
+
     # Filter by Category dropdown with radio buttons for fields
     st.sidebar.subheader("Filter Options")
 
@@ -404,85 +488,138 @@ def main():
     # Summary statistics
     stats = generate_summary_stats(filtered_df)
 
-    st.header("📈 Key Metrics")
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # ===== 1. KEY METRICS =====
+    if show_key_metrics:
+        st.header("📈 Key Metrics")
+        col1, col2, col3, col4, col5 = st.columns(5)
 
-    with col1:
-        create_metric_card("Total Tickets", stats['total_tickets'])
+        with col1:
+            create_metric_card("Total Tickets", stats['total_tickets'])
 
-    with col2:
-        create_metric_card("Resolved", stats['resolved_tickets'])
+        with col2:
+            create_metric_card("Resolved", stats['resolved_tickets'])
 
-    with col3:
-        create_metric_card("In Progress", stats['in_progress_tickets'])
+        with col3:
+            create_metric_card("In Progress", stats['in_progress_tickets'])
 
-    with col4:
-        create_metric_card("Open", stats['open_tickets'])
+        with col4:
+            create_metric_card("Open", stats['open_tickets'])
 
-    with col5:
-        create_metric_card("Resolution Rate", f"{stats['resolution_rate_pct']}%")
+        with col5:
+            create_metric_card("Resolution Rate", f"{stats['resolution_rate_pct']}%")
 
-    col6, col7, col8 = st.columns(3)
+        col6, col7, col8 = st.columns(3)
 
-    with col6:
-        create_metric_card("Avg Resolution Time", f"{stats['avg_resolution_hours']:.1f}h")
+        with col6:
+            create_metric_card("Avg Resolution Time", f"{stats['avg_resolution_hours']:.1f}h")
 
-    with col7:
-        create_metric_card("Median Resolution Time", f"{stats['median_resolution_hours']:.1f}h")
+        with col7:
+            create_metric_card("Median Resolution Time", f"{stats['median_resolution_hours']:.1f}h")
 
-    with col8:
-        create_metric_card("Top Category", stats['top_category'])
+        with col8:
+            create_metric_card("Top Category", stats['top_category'])
 
-    st.markdown("---")
+    # ===== 2. DETAILED DATA =====
+    if show_detailed_data:
+        st.markdown("---")
+        st.header("📋 Detailed Data")
 
-    # Charts section
-    st.header("📊 Visualizations")
+        # Create tabs based on whether technician data exists
+        if 'assigned_technician' in filtered_df.columns:
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                "Team Performance",
+                "Technician Performance",
+                "SLA Compliance",
+                "Resolution Times",
+                "Raw Data"
+            ])
 
-    # Row 1: Category and Priority
-    col1, col2 = st.columns(2)
+            with tab1:
+                st.dataframe(
+                    team_performance(filtered_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-    with col1:
-        st.plotly_chart(plot_category_distribution(filtered_df), use_container_width=True)
+            with tab2:
+                tech_perf_df = technician_performance(filtered_df)
+                if not tech_perf_df.empty:
+                    st.dataframe(
+                        tech_perf_df,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("No technician data available")
 
-    with col2:
-        st.plotly_chart(plot_priority_pie(filtered_df), use_container_width=True)
+            with tab3:
+                st.dataframe(
+                    sla_compliance(filtered_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-    # Row 2: Status and Resolution Time
-    col1, col2 = st.columns(2)
+            with tab4:
+                st.dataframe(
+                    avg_resolution_time_by_priority(filtered_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-    with col1:
-        st.plotly_chart(plot_status_distribution(filtered_df), use_container_width=True)
+            with tab5:
+                # Include technician in raw data display
+                raw_columns = [
+                    'ticket_id', 'created_date', 'resolved_date',
+                    'category', 'priority', 'assigned_team',
+                    'assigned_technician', 'status', 'resolution_time_hours'
+                ]
+                st.dataframe(
+                    filtered_df[raw_columns],
+                    use_container_width=True,
+                    hide_index=True
+                )
+        else:
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "Team Performance",
+                "SLA Compliance",
+                "Resolution Times",
+                "Raw Data"
+            ])
 
-    with col2:
-        st.plotly_chart(plot_resolution_time(filtered_df), use_container_width=True)
+            with tab1:
+                st.dataframe(
+                    team_performance(filtered_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-    # Row 3: Team Performance and SLA Compliance
-    col1, col2 = st.columns(2)
+            with tab2:
+                st.dataframe(
+                    sla_compliance(filtered_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-    with col1:
-        st.plotly_chart(plot_team_performance(filtered_df), use_container_width=True)
+            with tab3:
+                st.dataframe(
+                    avg_resolution_time_by_priority(filtered_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-    with col2:
-        st.plotly_chart(plot_sla_compliance(filtered_df), use_container_width=True)
+            with tab4:
+                st.dataframe(
+                    filtered_df[[
+                        'ticket_id', 'created_date', 'resolved_date',
+                        'category', 'priority', 'assigned_team',
+                        'status', 'resolution_time_hours'
+                    ]],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-    # Row 4: Trend Analysis
-    st.header("📈 Trend Analysis")
-
-    trend_period = st.radio(
-        "Select Time Period",
-        options=['Daily', 'Weekly', 'Monthly'],
-        horizontal=True,
-        index=0
-    )
-
-    period_map = {'Daily': 'D', 'Weekly': 'W', 'Monthly': 'M'}
-    st.plotly_chart(
-        plot_trend_over_time(filtered_df, period_map[trend_period]),
-        use_container_width=True
-    )
-
-    # Technician Performance Section
-    if 'assigned_technician' in filtered_df.columns:
+    # ===== 3. TECHNICIAN PERFORMANCE =====
+    if show_technician_perf and 'assigned_technician' in filtered_df.columns:
         st.markdown("---")
         st.header("👤 Technician Performance")
 
@@ -498,103 +635,67 @@ def main():
             if tech_time_chart:
                 st.plotly_chart(tech_time_chart, use_container_width=True)
 
-    # Data tables section
-    st.markdown("---")
-    st.header("📋 Detailed Data")
+    # ===== 4. TREND ANALYSIS =====
+    if show_trend_analysis:
+        st.markdown("---")
+        st.header("📈 Trend Analysis")
 
-    # Create tabs based on whether technician data exists
-    if 'assigned_technician' in filtered_df.columns:
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "Team Performance",
-            "Technician Performance",
-            "SLA Compliance",
-            "Resolution Times",
-            "Raw Data"
-        ])
+        trend_period = st.radio(
+            "Select Time Period",
+            options=['Daily', 'Weekly', 'Monthly'],
+            horizontal=True,
+            index=0
+        )
 
-        with tab1:
-            st.dataframe(
-                team_performance(filtered_df),
-                use_container_width=True,
-                hide_index=True
-            )
+        period_map = {'Daily': 'D', 'Weekly': 'W', 'Monthly': 'M'}
+        st.plotly_chart(
+            plot_trend_over_time(filtered_df, period_map[trend_period]),
+            use_container_width=True
+        )
 
-        with tab2:
-            tech_perf_df = technician_performance(filtered_df)
-            if not tech_perf_df.empty:
-                st.dataframe(
-                    tech_perf_df,
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info("No technician data available")
+    # ===== 5. VISUALIZATIONS =====
+    if show_visualizations:
+        st.markdown("---")
+        st.header("📊 Visualizations")
 
-        with tab3:
-            st.dataframe(
-                sla_compliance(filtered_df),
-                use_container_width=True,
-                hide_index=True
-            )
+        # Row 1: Category and Priority
+        charts_row1 = []
+        if show_category_chart:
+            charts_row1.append(("category", plot_category_distribution(filtered_df)))
+        if show_priority_chart:
+            charts_row1.append(("priority", plot_priority_pie(filtered_df)))
 
-        with tab4:
-            st.dataframe(
-                avg_resolution_time_by_priority(filtered_df),
-                use_container_width=True,
-                hide_index=True
-            )
+        if charts_row1:
+            cols = st.columns(len(charts_row1))
+            for idx, (chart_type, chart) in enumerate(charts_row1):
+                with cols[idx]:
+                    st.plotly_chart(chart, use_container_width=True)
 
-        with tab5:
-            # Include technician in raw data display
-            raw_columns = [
-                'ticket_id', 'created_date', 'resolved_date',
-                'category', 'priority', 'assigned_team',
-                'assigned_technician', 'status', 'resolution_time_hours'
-            ]
-            st.dataframe(
-                filtered_df[raw_columns],
-                use_container_width=True,
-                hide_index=True
-            )
-    else:
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "Team Performance",
-            "SLA Compliance",
-            "Resolution Times",
-            "Raw Data"
-        ])
+        # Row 2: Status and Resolution Time
+        charts_row2 = []
+        if show_status_chart:
+            charts_row2.append(("status", plot_status_distribution(filtered_df)))
+        if show_resolution_chart:
+            charts_row2.append(("resolution", plot_resolution_time(filtered_df)))
 
-        with tab1:
-            st.dataframe(
-                team_performance(filtered_df),
-                use_container_width=True,
-                hide_index=True
-            )
+        if charts_row2:
+            cols = st.columns(len(charts_row2))
+            for idx, (chart_type, chart) in enumerate(charts_row2):
+                with cols[idx]:
+                    st.plotly_chart(chart, use_container_width=True)
 
-        with tab2:
-            st.dataframe(
-                sla_compliance(filtered_df),
-                use_container_width=True,
-                hide_index=True
-            )
+        # Row 3: Team Performance and SLA Compliance
+        charts_row3 = []
+        if show_team_chart:
+            charts_row3.append(("team", plot_team_performance(filtered_df)))
+        if show_sla_chart:
+            charts_row3.append(("sla", plot_sla_compliance(filtered_df)))
 
-        with tab3:
-            st.dataframe(
-                avg_resolution_time_by_priority(filtered_df),
-                use_container_width=True,
-                hide_index=True
-            )
-
-        with tab4:
-            st.dataframe(
-                filtered_df[[
-                    'ticket_id', 'created_date', 'resolved_date',
-                    'category', 'priority', 'assigned_team',
-                    'status', 'resolution_time_hours'
-                ]],
-                use_container_width=True,
-                hide_index=True
-            )
+        if charts_row3:
+            cols = st.columns(len(charts_row3))
+            for idx, (chart_type, chart) in enumerate(charts_row3):
+                with cols[idx]:
+                    st.plotly_chart(chart, use_container_width=True)
 
     # Footer
     st.markdown("---")

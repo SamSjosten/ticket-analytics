@@ -4,6 +4,7 @@ Data loading and cleaning functions for ticket data.
 import logging
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 import pandas as pd
 
@@ -16,37 +17,60 @@ from config.settings import DATA_DIR, DATETIME_FORMAT
 logger = logging.getLogger(__name__)
 
 
-def load_tickets(filepath: Optional[Path] = None) -> pd.DataFrame:
+def load_tickets(
+    filepath: Optional[Path] = None,
+    source: str = "file",
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    status_filter: Optional[str] = None
+) -> pd.DataFrame:
     """
-    Load ticket data from a CSV or Excel file.
-    
+    Load ticket data from a file or SQL Server database.
+
     Args:
-        filepath: Path to the data file. Defaults to DATA_DIR/tickets.csv
-        
+        filepath: Path to the data file. Defaults to DATA_DIR/tickets.csv (only used if source='file')
+        source: Data source - 'file' or 'sql'
+        start_date: Optional start date filter (only for SQL)
+        end_date: Optional end date filter (only for SQL)
+        status_filter: Optional status filter (only for SQL)
+
     Returns:
         Cleaned DataFrame with ticket data
     """
-    if filepath is None:
-        filepath = DATA_DIR / "tickets.csv"
-    
-    filepath = Path(filepath)
-    
-    if not filepath.exists():
-        raise FileNotFoundError(f"Data file not found: {filepath}")
-    
-    logger.info(f"Loading data from: {filepath}")
-    
-    # Load based on file extension
-    if filepath.suffix.lower() == ".csv":
-        df = pd.read_csv(filepath)
-    elif filepath.suffix.lower() in [".xlsx", ".xls"]:
-        df = pd.read_excel(filepath)
+    if source == "sql":
+        # Load from SQL Server
+        from src.db_connector import SQLServerConnector
+
+        logger.info("Loading data from SQL Server")
+        connector = SQLServerConnector()
+        df = connector.load_tickets(
+            start_date=start_date,
+            end_date=end_date,
+            status_filter=status_filter
+        )
     else:
-        raise ValueError(f"Unsupported file format: {filepath.suffix}")
-    
+        # Load from file
+        if filepath is None:
+            filepath = DATA_DIR / "tickets.csv"
+
+        filepath = Path(filepath)
+
+        if not filepath.exists():
+            raise FileNotFoundError(f"Data file not found: {filepath}")
+
+        logger.info(f"Loading data from: {filepath}")
+
+        # Load based on file extension
+        if filepath.suffix.lower() == ".csv":
+            df = pd.read_csv(filepath)
+        elif filepath.suffix.lower() in [".xlsx", ".xls"]:
+            df = pd.read_excel(filepath)
+        else:
+            raise ValueError(f"Unsupported file format: {filepath.suffix}")
+
     # Clean the data
     df = clean_ticket_data(df)
-    
+
     logger.info(f"Loaded {len(df)} tickets")
     return df
 

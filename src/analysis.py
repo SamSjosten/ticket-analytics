@@ -237,6 +237,79 @@ def technician_performance(df: pd.DataFrame) -> pd.DataFrame:
     return result.sort_values("total_tickets", ascending=False)
 
 
+def technician_detailed_breakdown(df: pd.DataFrame, technician_name: str) -> dict:
+    """
+    Get detailed performance breakdown for a specific technician.
+
+    Args:
+        df: Ticket DataFrame
+        technician_name: Name of the technician
+
+    Returns:
+        Dictionary with detailed performance metrics
+    """
+    if "assigned_technician" not in df.columns:
+        return {}
+
+    # Filter for specific technician
+    tech_df = df[df["assigned_technician"] == technician_name].copy()
+
+    if tech_df.empty:
+        return {}
+
+    # Basic stats
+    total_tickets = len(tech_df)
+    resolved_df = tech_df[tech_df["status"] == "Resolved"]
+    in_progress_df = tech_df[tech_df["status"] == "In Progress"]
+    open_df = tech_df[tech_df["status"] == "Open"]
+
+    # Breakdown by category
+    category_breakdown = tech_df.groupby("category").size().to_dict()
+
+    # Breakdown by priority
+    priority_breakdown = tech_df.groupby("priority").size().to_dict()
+
+    # SLA compliance by priority
+    sla_compliance = {}
+    for priority in tech_df["priority"].unique():
+        priority_resolved = resolved_df[resolved_df["priority"] == priority]
+        if len(priority_resolved) > 0:
+            threshold = SLA_THRESHOLDS.get(priority, 999)
+            within_sla = (priority_resolved["resolution_time_hours"] <= threshold).sum()
+            sla_compliance[priority] = {
+                "total": len(priority_resolved),
+                "within_sla": within_sla,
+                "compliance_pct": round(within_sla / len(priority_resolved) * 100, 1)
+            }
+
+    # Time period analysis
+    if "created_date" in tech_df.columns:
+        tech_df["date"] = tech_df["created_date"].dt.date
+        daily_volume = tech_df.groupby("date").size().to_dict()
+        avg_daily_volume = round(len(tech_df) / len(daily_volume), 1) if daily_volume else 0
+    else:
+        daily_volume = {}
+        avg_daily_volume = 0
+
+    return {
+        "technician_name": technician_name,
+        "team": tech_df["assigned_team"].iloc[0] if len(tech_df) > 0 else "Unknown",
+        "total_tickets": total_tickets,
+        "resolved": len(resolved_df),
+        "in_progress": len(in_progress_df),
+        "open": len(open_df),
+        "resolution_rate_pct": round(len(resolved_df) / total_tickets * 100, 1) if total_tickets > 0 else 0,
+        "avg_resolution_hours": round(resolved_df["resolution_time_hours"].mean(), 2) if len(resolved_df) > 0 else None,
+        "median_resolution_hours": round(resolved_df["resolution_time_hours"].median(), 2) if len(resolved_df) > 0 else None,
+        "min_resolution_hours": round(resolved_df["resolution_time_hours"].min(), 2) if len(resolved_df) > 0 else None,
+        "max_resolution_hours": round(resolved_df["resolution_time_hours"].max(), 2) if len(resolved_df) > 0 else None,
+        "category_breakdown": category_breakdown,
+        "priority_breakdown": priority_breakdown,
+        "sla_compliance": sla_compliance,
+        "avg_daily_volume": avg_daily_volume
+    }
+
+
 def generate_summary_stats(df: pd.DataFrame) -> dict:
     """
     Generate high-level summary statistics.

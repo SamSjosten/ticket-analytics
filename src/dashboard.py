@@ -12,9 +12,13 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import logging
 
 from config.settings import DATA_DIR, TICKET_CATEGORIES, PRIORITY_LEVELS, TEAMS
+from config.database import DatabaseConfig
 from src.data_loader import load_tickets
+from src.db_connector import SQLServerConnector
+from src.auth0_manager import Auth0Manager
 from src.analysis import (
     tickets_by_category,
     tickets_by_priority,
@@ -23,9 +27,14 @@ from src.analysis import (
     tickets_over_time,
     team_performance,
     technician_performance,
+    technician_detailed_breakdown,
     sla_compliance,
     generate_summary_stats
 )
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # Page configuration
@@ -36,13 +45,35 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Initialize Auth0 manager
+auth_manager = Auth0Manager()
+auth_manager.initialize_session_state()
+
+# Validate Auth0 configuration
+is_valid, msg = auth_manager.config.validate_config()
+if not is_valid:
+    st.error(f"⚠️ Auth0 Configuration Error: {msg}")
+    st.info("""
+    **Auth0 Setup Required:**
+    1. Copy `.env.example` to `.env`
+    2. Configure Auth0 settings in `.env` file
+    3. Ensure callback URL matches Auth0 dashboard
+
+    See `.env.example` for required Auth0 settings.
+    """)
+    st.stop()
+
 
 @st.cache_data
-def load_data(filepath=None):
-    """Load and cache ticket data."""
-    if filepath is None:
-        filepath = DATA_DIR / "tickets.csv"
-    return load_tickets(filepath)
+def load_data():
+    """Load and cache ticket data from SQL Server."""
+    return load_tickets(source="sql")
+
+
+def test_sql_connection():
+    """Test SQL Server connection and return status."""
+    connector = SQLServerConnector()
+    return connector.test_connection()
 
 
 def create_metric_card(label, value, delta=None, delta_color="normal"):
@@ -296,22 +327,163 @@ def plot_technician_resolution_time(df):
     return fig
 
 
+def show_login_page():
+    """Display login page for unauthenticated users."""
+    st.title("🔒 IT Ticket Analytics Dashboard")
+    st.markdown("---")
+
+    # Center content with columns
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col2:
+        st.markdown("""
+        ### Welcome to IT Ticket Analytics
+
+        Comprehensive insights into IT support tickets including:
+        - Real-time ticket analytics
+        - Team and technician performance tracking
+        - SLA compliance monitoring
+        - Interactive visualizations
+
+        Please log in to access the dashboard.
+        """)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Login button
+        col_a, col_b, col_c = st.columns([1, 2, 1])
+        with col_b:
+            if st.button("🔐 Login with Auth0", use_container_width=True, type="primary"):
+                auth_url = auth_manager.login()
+                st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">',
+                          unsafe_allow_html=True)
+                st.info("Redirecting to Auth0...")
+
+        st.markdown("<br><br>", unsafe_allow_html=True)
+
+        st.info("""
+        **First Time Users:**
+        - You'll be redirected to Auth0 for secure authentication
+        - Your account will be created automatically upon first login
+        - All data is stored securely
+        """)
+
+
+def show_user_profile_sidebar():
+    """Display user profile in sidebar."""
+    user_info = st.session_state.get('user_info', {})
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 👤 User Profile")
+
+    # Profile picture
+    if user_info.get('picture'):
+        st.sidebar.image(user_info['picture'], width=80)
+
+    # User details
+    st.sidebar.markdown(f"**{user_info.get('name', 'User')}**")
+    st.sidebar.caption(user_info.get('email', ''))
+
+    # Role badge (from database)
+    db_user = auth_manager.get_user_from_database(user_info.get('sub'))
+    if db_user:
+        role = db_user.get('role', 'user')
+        role_badge = {
+            'admin': '🔴 Admin',
+            'analyst': '🟡 Analyst',
+            'user': '🟢 User'
+        }.get(role, '🟢 User')
+        st.sidebar.caption(f"Role: {role_badge}")
+
+    # Logout button
+    st.sidebar.markdown("<br>", unsafe_allow_html=True)
+    if st.sidebar.button("🚪 Logout", use_container_width=True):
+        logout_url = auth_manager.get_logout_url()
+        auth_manager.logout()
+        st.markdown(f'<meta http-equiv="refresh" content="0; url={logout_url}">',
+                  unsafe_allow_html=True)
+        st.rerun()
+
+
 def main():
     """Main dashboard application."""
 
+    # ===== AUTHENTICATION GATE =====
+
+    # Check for OAuth callback
+    query_params = st.query_params
+
+    if 'code' in query_params and 'state' in query_params:
+        # Handle OAuth callback
+        with st.spinner("Completing authentication..."):
+            success, message = auth_manager.handle_callback(
+                query_params['code'],
+                query_params['state']
+            )
+
+        if success:
+            st.success("Login successful!")
+            st.query_params.clear()
+            st.rerun()
+        else:
+            st.error(f"Authentication failed: {message}")
+            st.info("Please try logging in again. If the problem persists, check your Auth0 configuration.")
+            st.query_params.clear()
+            st.stop()
+
+    # Check authentication
+    if not auth_manager.is_authenticated():
+        show_login_page()
+        st.stop()
+
+    # ===== AUTHENTICATED DASHBOARD =====
+
     # Header
     st.title("📊 IT Ticket Analytics Dashboard")
+
+    # Show user profile
+    show_user_profile_sidebar()
+
     st.markdown("---")
 
     # Sidebar
+    st.sidebar.header("🔌 Database Connection")
+
+    # SQL Server connection status
+    st.sidebar.markdown("### Connection Status")
+    with st.sidebar:
+        with st.spinner("Testing SQL Server connection..."):
+            success, message = test_sql_connection()
+
+        if success:
+            st.success("✅ " + message)
+
+            # Show database info
+            try:
+                connector = SQLServerConnector()
+                info = connector.get_table_info()
+                st.info(f"📊 {info['row_count']:,} records available")
+                st.caption(f"Date range: {info['min_date']:%Y-%m-%d} to {info['max_date']:%Y-%m-%d}")
+            except Exception as e:
+                st.warning(f"Could not retrieve table info: {e}")
+        else:
+            st.error("❌ " + message)
+            st.info("""
+            **Configuration Required:**
+            1. Copy `.env.example` to `.env`
+            2. Update connection settings
+            3. Ensure SQL Server is accessible
+            """)
+            return
+
+    st.sidebar.markdown("---")
     st.sidebar.header("Filters & Options")
 
-    # Load data
+    # Load data from SQL Server
     try:
         df = load_data()
-    except FileNotFoundError:
-        st.error("❌ Data file not found!")
-        st.info("Please run `python src/generate_mock_data.py` to create sample data.")
+    except Exception as e:
+        st.error(f"❌ Error loading data: {e}")
         return
 
     # Date range filter
@@ -623,17 +795,149 @@ def main():
         st.markdown("---")
         st.header("👤 Technician Performance")
 
-        col1, col2 = st.columns(2)
+        # Technician selector at the top
+        available_technicians = sorted(filtered_df['assigned_technician'].unique())
 
-        with col1:
-            tech_perf_chart = plot_technician_performance(filtered_df)
-            if tech_perf_chart:
-                st.plotly_chart(tech_perf_chart, use_container_width=True)
+        # Add "All Technicians" option
+        tech_options = ["All Technicians"] + available_technicians
 
-        with col2:
-            tech_time_chart = plot_technician_resolution_time(filtered_df)
-            if tech_time_chart:
-                st.plotly_chart(tech_time_chart, use_container_width=True)
+        selected_tech = st.selectbox(
+            "Select a technician to view performance",
+            options=tech_options,
+            index=0
+        )
+
+        # Filter data based on selection
+        if selected_tech == "All Technicians":
+            tech_filtered_df = filtered_df
+            show_overview = True
+            show_individual = False
+        else:
+            tech_filtered_df = filtered_df[filtered_df['assigned_technician'] == selected_tech]
+            show_overview = False
+            show_individual = True
+
+        # Overview Charts (shown when "All Technicians" is selected)
+        if show_overview:
+            st.subheader("Overview - All Technicians")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                tech_perf_chart = plot_technician_performance(tech_filtered_df)
+                if tech_perf_chart:
+                    st.plotly_chart(tech_perf_chart, use_container_width=True)
+
+            with col2:
+                tech_time_chart = plot_technician_resolution_time(tech_filtered_df)
+                if tech_time_chart:
+                    st.plotly_chart(tech_time_chart, use_container_width=True)
+
+        # Individual Technician Breakdown (shown when specific technician is selected)
+        if show_individual and selected_tech != "All Technicians":
+            tech_details = technician_detailed_breakdown(filtered_df, selected_tech)
+
+            if tech_details:
+                # Display technician header
+                st.markdown(f"### {tech_details['technician_name']} - {tech_details['team']}")
+
+                # Key metrics row
+                col1, col2, col3, col4, col5 = st.columns(5)
+
+                with col1:
+                    st.metric("Total Tickets", tech_details['total_tickets'])
+
+                with col2:
+                    st.metric("Resolved", tech_details['resolved'])
+
+                with col3:
+                    st.metric("In Progress", tech_details['in_progress'])
+
+                with col4:
+                    st.metric("Open", tech_details['open'])
+
+                with col5:
+                    st.metric("Resolution Rate", f"{tech_details['resolution_rate_pct']}%")
+
+                # Resolution time metrics
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    avg_time = tech_details['avg_resolution_hours']
+                    st.metric("Avg Resolution Time", f"{avg_time:.1f}h" if avg_time else "N/A")
+
+                with col2:
+                    med_time = tech_details['median_resolution_hours']
+                    st.metric("Median Resolution Time", f"{med_time:.1f}h" if med_time else "N/A")
+
+                with col3:
+                    min_time = tech_details['min_resolution_hours']
+                    st.metric("Fastest Resolution", f"{min_time:.1f}h" if min_time else "N/A")
+
+                with col4:
+                    max_time = tech_details['max_resolution_hours']
+                    st.metric("Slowest Resolution", f"{max_time:.1f}h" if max_time else "N/A")
+
+                # Breakdown charts
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    # Category breakdown
+                    if tech_details['category_breakdown']:
+                        cat_df = pd.DataFrame(
+                            list(tech_details['category_breakdown'].items()),
+                            columns=['Category', 'Count']
+                        )
+                        fig = px.bar(
+                            cat_df,
+                            x='Category',
+                            y='Count',
+                            title=f"Tickets by Category - {selected_tech}",
+                            color='Count',
+                            color_continuous_scale='Blues'
+                        )
+                        fig.update_layout(showlegend=False)
+                        st.plotly_chart(fig, use_container_width=True)
+
+                with col2:
+                    # Priority breakdown
+                    if tech_details['priority_breakdown']:
+                        pri_df = pd.DataFrame(
+                            list(tech_details['priority_breakdown'].items()),
+                            columns=['Priority', 'Count']
+                        )
+                        fig = px.pie(
+                            pri_df,
+                            values='Count',
+                            names='Priority',
+                            title=f"Tickets by Priority - {selected_tech}",
+                            color='Priority',
+                            color_discrete_map={
+                                'Critical': '#dc3545',
+                                'High': '#fd7e14',
+                                'Medium': '#ffc107',
+                                'Low': '#28a745'
+                            }
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                # SLA Compliance breakdown
+                if tech_details['sla_compliance']:
+                    st.markdown("#### SLA Compliance by Priority")
+
+                    sla_data = []
+                    for priority, metrics in tech_details['sla_compliance'].items():
+                        sla_data.append({
+                            'Priority': priority,
+                            'Total Resolved': metrics['total'],
+                            'Within SLA': metrics['within_sla'],
+                            'Compliance %': metrics['compliance_pct']
+                        })
+
+                    sla_df = pd.DataFrame(sla_data)
+                    st.dataframe(sla_df, use_container_width=True, hide_index=True)
+
+                # Additional metrics
+                st.markdown(f"**Average Daily Volume:** {tech_details['avg_daily_volume']} tickets/day")
 
     # ===== 4. TREND ANALYSIS =====
     if show_trend_analysis:
